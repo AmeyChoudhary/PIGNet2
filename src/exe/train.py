@@ -47,7 +47,7 @@ def run(
                 model.validation_step(batch)
 
 
-@hydra.main(config_path="../config", config_name="config_train")
+@hydra.main(config_path="../config", config_name="config_train", version_base='1.2')
 def main(config: DictConfig):
     logger = utils.initialize_logger(config.run.log_file)
     logger.info(f"Current working directory: {os.getcwd()}")
