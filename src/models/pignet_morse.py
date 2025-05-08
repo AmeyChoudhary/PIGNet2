@@ -183,9 +183,20 @@ from torch.nn import Parameter, ReLU, Sigmoid, Tanh
 from torch_geometric.data import Batch
 from torch_geometric.nn import Linear, Sequential
 from torch_scatter import scatter
+from transformers import AutoTokenizer, AutoModel
 
 from . import physics
-from .pignet import PIGNet  # parent class with ProtBERT + MPNN
+from .pignet import PIGNet
+
+# loading prot_bert
+prot_tokenizer = AutoTokenizer.from_pretrained("Rostlab/prot_bert", do_lower_case=False)
+prot_bert = AutoModel.from_pretrained("Rostlab/prot_bert")
+print("[PIGNet] Loading ProtBERT… this may take a few seconds the first time")
+for p in prot_bert.parameters():
+    p.requires_grad = False
+print("[PIGNet] ProtBERT frozen (no fine‑tuning)")
+prot_proj = Linear(prot_bert.config.hidden_size, 128, bias=False) # dim_gnn taken to be 128 always
+
 
 
 class PIGNetMorse(PIGNet):
@@ -231,6 +242,14 @@ class PIGNetMorse(PIGNet):
     # ------------------------------------------------------------------
     # Forward – identical to parent until vdW term, then Morse potential
     # ------------------------------------------------------------------
+    def encode_protein(self, seq: str, device: torch.device):
+        toks = prot_tokenizer(" ".join(list(seq)), return_tensors="pt").to(device)
+        prot_bert.to(device)
+        with torch.set_grad_enabled(prot_bert.training):
+            out = prot_bert(**toks).last_hidden_state.squeeze(0).to(device)
+        return out[1:-1].to(device)  # strip CLS/SEP
+
+
     def forward(self, sample: Batch):
         cfg = self.config.model
         device = self.device
@@ -243,9 +262,16 @@ class PIGNetMorse(PIGNet):
         if self.lig_embed is None:
             in_dim = sample.x.size(1)          # detect at runtime
             self.lig_embed = Linear(in_dim, self.dim_gnn, bias=False).to(self.device)
-            print(f"[PIGNet] Created ligand embedder on-the-fly ({in_dim} → {self.dim_gnn})")
+            # print(f"[PIGNet Morse] Created ligand embedder on-the-fly ({in_dim} → {self.dim_gnn})")
         x_lig = self.lig_embed(sample.x[lig_mask])
-        residue_repr = self.prot_proj(self._encode_protein(sample.prot_seq, device))
+        # print("[PIGNetMorse] Ligand embedding done – shape:", x_lig.shape)
+        # Protein embedding
+        # print("[PIGNetMorse] Protein embedding started")
+        temp = self.encode_protein(sample.prot_seq, device)
+        # print("Temp calculated successfully")
+        global prot_proj
+        prot_proj = prot_proj.to(device)
+        residue_repr = prot_proj(temp).to(device)
         x_prot = residue_repr[sample.residue_index]
         x = torch.zeros(sample.x.size(0), residue_repr.size(1), device=device)
         x[lig_mask] = x_lig

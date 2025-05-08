@@ -379,6 +379,15 @@ THREE_TO_ONE = {
     "PRO": "P", "SER": "S", "THR": "T", "TRP": "W", "TYR": "Y", "VAL": "V",
 }
 
+# loading prot_bert
+prot_tokenizer = AutoTokenizer.from_pretrained("Rostlab/prot_bert", do_lower_case=False)
+prot_bert = AutoModel.from_pretrained("Rostlab/prot_bert")
+print("[PIGNet] Loading ProtBERT… this may take a few seconds the first time")
+for p in prot_bert.parameters():
+    p.requires_grad = False
+print("[PIGNet] ProtBERT frozen (no fine‑tuning)")
+prot_proj = Linear(prot_bert.config.hidden_size, 128, bias=False) # dim_gnn taken to be 128 always
+
 
 class PIGNet(Module):
     """Protein–ligand graph network with ProtBERT embeddings and MPNN message passing.
@@ -408,15 +417,6 @@ class PIGNet(Module):
 
         # ProtBERT encoder
         print("[PIGNet] Loading ProtBERT… this may take a few seconds the first time")
-        self.prot_tokenizer = AutoTokenizer.from_pretrained("Rostlab/prot_bert", do_lower_case=False)
-        self.prot_bert = AutoModel.from_pretrained("Rostlab/prot_bert")
-        if not config.model.get("finetune_protbert", False):
-            for p in self.prot_bert.parameters():
-                p.requires_grad = False
-            print("[PIGNet] ProtBERT frozen (no fine‑tuning)")
-        else:
-            print("[PIGNet] ProtBERT will be fine‑tuned")
-        self.prot_proj = Linear(self.prot_bert.config.hidden_size, dim_gnn, bias=False)
 
         # Message‑passing layers
         self.intraconv = torch.nn.ModuleList([MPNN(dim_gnn, aggr="add") for _ in range(n_gnn)])
@@ -525,7 +525,9 @@ class PIGNet(Module):
             print(f"[PIGNet] Created ligand embedder on-the-fly ({in_dim} → {self.dim_gnn})")
         x_lig = self.lig_embed(sample.x[lig_mask])
         print("[PIGNet]   » Encoding protein sequence of length", len(sample.prot_seq))
-        residue_repr = self.prot_proj(self._encode_protein(sample.prot_seq, device))  # (L, dim_gnn)
+        global prot_proj
+        prot_proj = prot_proj.to(device)
+        residue_repr = prot_proj(self._encode_protein(sample.prot_seq, device))  # (L, dim_gnn)
         x_prot = residue_repr[sample.residue_index]
 
         x = torch.zeros(sample.x.size(0), residue_repr.size(1), device=device)
@@ -574,11 +576,12 @@ class PIGNet(Module):
     # ProtBERT helper
     # ──────────────────────────────────────────────────────────────────────
     def _encode_protein(self, seq: str, device: torch.device):
-        toks = self.prot_tokenizer(" ".join(list(seq)), return_tensors="pt").to(device)
-        with torch.set_grad_enabled(self.prot_bert.training):
-            out = self.prot_bert(**toks).last_hidden_state.squeeze(0)
-        return out[1:-1]  # strip CLS/SEP
-
+        toks = prot_tokenizer(" ".join(list(seq)), return_tensors="pt").to(device)
+        prot_bert.to(device)
+        with torch.set_grad_enabled(prot_bert.training):
+            out = prot_bert(**toks).last_hidden_state.squeeze(0).to(device)
+        return out[1:-1].to(device)  # strip CLS/SEP
+        
     # ──────────────────────────────────────────────────────────────────────
     # Losses (unchanged)
     # ──────────────────────────────────────────────────────────────────────
