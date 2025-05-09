@@ -382,10 +382,10 @@ THREE_TO_ONE = {
 # loading prot_bert
 prot_tokenizer = AutoTokenizer.from_pretrained("Rostlab/prot_bert", do_lower_case=False)
 prot_bert = AutoModel.from_pretrained("Rostlab/prot_bert")
-print("[PIGNet] Loading ProtBERT… this may take a few seconds the first time")
+# print("[PIGNet] Loading ProtBERT… this may take a few seconds the first time")
 for p in prot_bert.parameters():
     p.requires_grad = False
-print("[PIGNet] ProtBERT frozen (no fine‑tuning)")
+# print("[PIGNet] ProtBERT frozen (no fine‑tuning)")
 prot_proj = Linear(prot_bert.config.hidden_size, 128, bias=False) # dim_gnn taken to be 128 always
 
 
@@ -409,26 +409,26 @@ class PIGNet(Module):
         lig_in_features = config.model.ligand_in_features
         self.dim_gnn = dim_gnn
 
-        print("[PIGNet] Initialising…  dim_gnn =", dim_gnn)
+        # print("[PIGNet] Initialising…  dim_gnn =", dim_gnn)
 
         # Ligand atom embedder
         self.lig_embed = None
-        print("[PIGNet] Ligand embedder created ({} → {})".format(lig_in_features, dim_gnn))
+        # print("[PIGNet] Ligand embedder created ({} → {})".format(lig_in_features, dim_gnn))
 
         # ProtBERT encoder
-        print("[PIGNet] Loading ProtBERT… this may take a few seconds the first time")
+        # print("[PIGNet] Loading ProtBERT… this may take a few seconds the first time")
 
         # Message‑passing layers
         self.intraconv = torch.nn.ModuleList([MPNN(dim_gnn, aggr="add") for _ in range(n_gnn)])
 
-        print(f"[PIGNet] Created {n_gnn} MPNN layers")
+        # print(f"[PIGNet] Created {n_gnn} MPNN layers")
 
         # Optional inter‑molecular blocks (same as original)
         self.interconv = ModuleList()
         if config.model.interconv:
             for _ in range(n_gnn):
                 self.interconv.append(Sequential("x, edge_index", [(InteractionNet(dim_gnn), "x, edge_index -> x"), (Dropout(dropout_rate), "x -> x")]))
-            print(f"[PIGNet] Added {n_gnn} InteractionNet blocks for cross‑graph attention")
+            # print(f"[PIGNet] Added {n_gnn} InteractionNet blocks for cross‑graph attention")
 
         # Physics‑based head (unchanged)
         self.nn_vdw_epsilon = Sequential("x", [(Linear(dim_gnn * 2, dim_mlp), "x -> x"), ReLU(), Linear(dim_mlp, 1), Sigmoid()])
@@ -439,20 +439,20 @@ class PIGNet(Module):
         if config.model.get("include_ionic", False):
             self.ionic_coeff = Parameter(torch.tensor([1.0]))
 
-        print("[PIGNet] Initialisation complete")
+        # print("[PIGNet] Initialisation complete")
 
     # ──────────────────────────────────────────────────────────────────────
     # Helpers – protein attributes
     # ──────────────────────────────────────────────────────────────────────
     def _ensure_protein_attributes(self, sample: Batch):
         if hasattr(sample, "prot_seq") and hasattr(sample, "residue_index"):
-            print("[PIGNet] Batch already contains prot_seq & residue_index → using them")
+            # print("[PIGNet] Batch already contains prot_seq & residue_index → using them")
             return
         try:
             self._infer_protein_attributes(sample)
-            print("[PIGNet] Inferred prot_seq & residue_index from residue_name/id/chain_id")
+            # print("[PIGNet] Inferred prot_seq & residue_index from residue_name/id/chain_id")
         except Exception as e:
-            print("[PIGNet] WARNING: could not infer protein sequence (", e, ") → using dummy residue")
+            # print("[PIGNet] WARNING: could not infer protein sequence (", e, ") → using dummy residue")
             prot_mask = ~sample.is_ligand
             sample.prot_seq = "X"
             sample.residue_index = torch.zeros(prot_mask.sum(), dtype=torch.long, device=sample.x.device)
@@ -495,7 +495,7 @@ class PIGNet(Module):
     # Graph conv helper
     # ──────────────────────────────────────────────────────────────────────
     def conv(self, x, edge_index_1, edge_index_2):
-        print("[PIGNet]   » Intra‑graph message passing…")
+        # print("[PIGNet]   » Intra‑graph message passing…")
         for conv in self.intraconv:
             x = conv(x, edge_index_1)
         for conv in self.interconv:
@@ -509,7 +509,7 @@ class PIGNet(Module):
         cfg = self.config.model
         device = self.device
 
-        print("[PIGNet] Forward pass started – batch size:", sample.batch.max().item() + 1)
+        # print("[PIGNet] Forward pass started – batch size:", sample.batch.max().item() + 1)
 
         # Ensure PLM attributes
         self._ensure_protein_attributes(sample)
@@ -518,13 +518,13 @@ class PIGNet(Module):
         prot_mask = ~lig_mask
 
         # 1. Node embeddings
-        print("[PIGNet]   » Embedding ligand atoms…")
+        # print("[PIGNet]   » Embedding ligand atoms…")
         if self.lig_embed is None:
             in_dim = sample.x.size(1)          # detect at runtime
             self.lig_embed = Linear(in_dim, self.dim_gnn, bias=False).to(self.device)
-            print(f"[PIGNet] Created ligand embedder on-the-fly ({in_dim} → {self.dim_gnn})")
+            # print(f"[PIGNet] Created ligand embedder on-the-fly ({in_dim} → {self.dim_gnn})")
         x_lig = self.lig_embed(sample.x[lig_mask])
-        print("[PIGNet]   » Encoding protein sequence of length", len(sample.prot_seq))
+        # print("[PIGNet]   » Encoding protein sequence of length", len(sample.prot_seq))
         global prot_proj
         prot_proj = prot_proj.to(device)
         residue_repr = prot_proj(self._encode_protein(sample.prot_seq, device))  # (L, dim_gnn)
@@ -533,14 +533,14 @@ class PIGNet(Module):
         x = torch.zeros(sample.x.size(0), residue_repr.size(1), device=device)
         x[lig_mask] = x_lig
         x[prot_mask] = x_prot
-        print("[PIGNet]   » Node feature matrix built – shape:", x.shape)
+        # print("[PIGNet]   » Node feature matrix built – shape:", x.shape)
 
         # 2. Message passing
         x = self.conv(x, sample.edge_index, sample.edge_index_c)
-        print("[PIGNet]   » Message passing done")
+        # print("[PIGNet]   » Message passing done")
 
         # 3. Physics head (identical to original)
-        print("[PIGNet]   » Computing physics‑based interaction energies…")
+        # print("[PIGNet]   » Computing physics‑based interaction energies…")
         edge_index_i = physics.interaction_edges(sample.is_ligand, sample.batch)
         D = physics.distances(sample.pos, edge_index_i)
         _mask = (cfg.interaction_range[0] <= D) & (D <= cfg.interaction_range[1])
@@ -569,7 +569,7 @@ class PIGNet(Module):
         if cfg.rotor_penalty:
             penalty = 1 + self.rotor_coeff ** 2 * sample.rotor
             energies = energies / penalty
-        print("[PIGNet]   » Energies computed – shape:", energies.shape)
+        # print("[PIGNet]   » Energies computed – shape:", energies.shape)
         return energies, dvdw_radii
 
     # ──────────────────────────────────────────────────────────────────────

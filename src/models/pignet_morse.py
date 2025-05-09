@@ -191,10 +191,10 @@ from .pignet import PIGNet
 # loading prot_bert
 prot_tokenizer = AutoTokenizer.from_pretrained("Rostlab/prot_bert", do_lower_case=False)
 prot_bert = AutoModel.from_pretrained("Rostlab/prot_bert")
-print("[PIGNet] Loading ProtBERT… this may take a few seconds the first time")
+# print("[PIGNet] Loading ProtBERT… this may take a few seconds the first time")
 for p in prot_bert.parameters():
     p.requires_grad = False
-print("[PIGNet] ProtBERT frozen (no fine‑tuning)")
+# print("[PIGNet] ProtBERT frozen (no fine‑tuning)")
 prot_proj = Linear(prot_bert.config.hidden_size, 128, bias=False) # dim_gnn taken to be 128 always
 
 
@@ -254,7 +254,7 @@ class PIGNetMorse(PIGNet):
         cfg = self.config.model
         device = self.device
 
-        print("[PIGNetMorse] Forward pass started – Morse potential variant")
+        # print("[PIGNetMorse] Forward pass started – Morse potential variant")
 
         # Ensure protein attributes & build embeddings (re‑use parent helpers)
         self._ensure_protein_attributes(sample)
@@ -313,7 +313,12 @@ class PIGNetMorse(PIGNet):
         if cfg.get("include_ionic", False):
             minima_ionic = self.ionic_coeff ** 2 * (sample.atom_charges[edge_index_i[0]] * sample.atom_charges[edge_index_i[1]])
             energies_pairs[4] = physics.linear_potential(D, R, minima_ionic, *cfg.ionic_cutoffs)
-
+        # slot 4 → pure Coulomb
+        # print("Starting electrostatic energy calculation")
+        q_i = sample.atom_charges[edge_index_i[0]]
+        q_j = sample.atom_charges[edge_index_i[1]]
+        energies_pairs[4] = physics.coulomb_potential(D, q_i, q_j)
+        # print("Finishing electrostatic energy calculation")
         # Masks & aggregation
         masks = physics.interaction_masks(sample.is_metal, sample.is_h_donor, sample.is_h_acceptor, sample.is_hydrophobic, edge_index_i, True)
         energies_pairs *= masks
@@ -323,7 +328,7 @@ class PIGNetMorse(PIGNet):
             penalty = 1 + self.rotor_coeff ** 2 * sample.rotor
             energies = energies / penalty
 
-        print("[PIGNetMorse] Energies computed – shape:", energies.shape)
+        # print("[PIGNetMorse] Energies computed – shape:", energies.shape)
         return energies, dvdw_radii
 
     # Loss functions, training_step, etc. inherit unchanged from PIGNet

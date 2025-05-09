@@ -149,6 +149,18 @@ def linear_potential(
     energy = energy * E
     return energy
 
+def coulomb_potential(D, q_i, q_j, k_e=138.935456, dielectric=1.0):
+    """
+    E = k_e * q_i * q_j / (dielectric * D)
+      - D: (E,) distances
+      - q_i, q_j: (E,) charges
+      - dielectric: default 1.0 (vacuum)
+      - k_e: Coulomb constant (kcal·Å)/(mol·e²)
+    """
+    inv = 1.0 / D.clamp(min=1e-6)
+    return k_e * (q_i * q_j) * inv / dielectric
+
+
 
 def interaction_masks(
     metal_mask: BoolTensor,
