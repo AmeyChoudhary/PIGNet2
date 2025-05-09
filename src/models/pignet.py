@@ -448,6 +448,7 @@ class PIGNet(Module):
         if hasattr(sample, "prot_seq") and hasattr(sample, "residue_index"):
             print("[PIGNet] Batch already contains prot_seq & residue_index → using them")
             return
+        print(sample)
         try:
             self._infer_protein_attributes(sample)
             print("[PIGNet] Inferred prot_seq & residue_index from residue_name/id/chain_id")
@@ -458,18 +459,31 @@ class PIGNet(Module):
             sample.residue_index = torch.zeros(prot_mask.sum(), dtype=torch.long, device=sample.x.device)
 
     def _infer_protein_attributes(self, sample: Batch):
-        assert hasattr(sample, "residue_name") and hasattr(sample, "residue_id") and hasattr(sample, "chain_id"), "Missing fields for inference"
+        assert hasattr(sample, "residue_name"), "Missing residue_name" 
+        assert hasattr(sample, "residue_id"), "Missing residue_id"
+        assert hasattr(sample, "chain_id"), "Missing chain_id"
         prot_mask = ~sample.is_ligand
-        names = sample.residue_name[prot_mask]
+        # residue_name is a list; use list comprehension
+        names = [n for n, is_prot in zip(sample.residue_name, prot_mask) if is_prot]
+        print("names correct")
         res_ids = sample.residue_id[prot_mask]
-        chains = sample.chain_id[prot_mask]
+        print("res_ids correct")
+        chains = [c for c, is_prot in zip(sample.chain_id, prot_mask) if is_prot]
+        print("chains  correct")
         keys, seq_letters, idx_map = [], [], {}
         for nm, rid, ch in zip(names, res_ids, chains):
-            key = (int(ch), int(rid))
+            key = (int(ch.item()) if isinstance(ch, torch.Tensor) else int(ch), int(rid.item()) if isinstance(rid, torch.Tensor) else int(rid))
+            print("key correct")
             if key not in idx_map:
                 idx_map[key] = len(seq_letters)
-                three = nm.decode() if isinstance(nm, (bytes, bytearray)) else str(nm)
-                seq_letters.append(THREE_TO_ONE.get(three.upper(), "X"))
+                try:
+                    three = nm.decode() if isinstance(nm, (bytes, bytearray)) else str(nm)
+                    one = THREE_TO_ONE.get(three.upper(), "X")
+                except Exception as e:
+                    print(f"Residue decode error: {e} -> using 'X'")
+                    one = "X"
+                seq_letters.append(one)
+
             keys.append(idx_map[key])
         sample.prot_seq = "".join(seq_letters)
         sample.residue_index = torch.tensor(keys, dtype=torch.long, device=sample.x.device)

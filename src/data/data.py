@@ -193,6 +193,27 @@ def mol_to_data(
     data.is_h_acceptor = torch.tensor(h_acceptors)
     data.is_hydrophobic = torch.tensor(hydrophobes)
 
+    # Residue-level metadata
+    residue_names = []
+    residue_ids = []
+    chain_ids = []
+    for atom in mol.GetAtoms():
+        info = atom.GetPDBResidueInfo()
+        if info is not None:
+            residue_names.append(info.GetResidueName().strip())
+            residue_ids.append(info.GetResidueNumber())
+            chain_ids.append(info.GetChainId().strip())
+        else:
+            # If no PDB info, use placeholder
+            residue_names.append("UNK")
+            residue_ids.append(-1)
+            chain_ids.append("")
+
+    data.residue_name = residue_names  # list[str]
+    data.residue_id = torch.tensor(residue_ids, dtype=torch.long)
+    data.chain_id = chain_ids  # list[str]
+
+
     return data
 
 
@@ -269,18 +290,34 @@ def complex_to_data(
 
     # Combine the values.
     assert set(ligand.keys) == set(target.keys)
-    for attr in ligand.keys:
-        ligand_value = ligand[attr]
-        target_value = target[attr]
+    all_keys = set(ligand.keys) | set(target.keys)
+    for attr in all_keys:
+        ligand_value = getattr(ligand, attr)
+        target_value = getattr(target, attr)
 
-        # Shift atom indices for some attributes.
-        if attr in ("edge_index",):
-            target_value = target_value + ligand.num_nodes
+        if ligand_value is None and target_value is None:
+            continue
 
-        # Dimension to concatenate over.
-        cat_dim = ligand.__cat_dim__(attr, None)
-        value = torch.cat((ligand_value, target_value), cat_dim)
-        data[attr] = value
+        if isinstance(ligand_value, torch.Tensor) and isinstance(target_value, torch.Tensor):
+            # Shift edge indices for target
+            if attr == "edge_index":
+                target_value = target_value + ligand.num_nodes
+
+            cat_dim = ligand.__cat_dim__(attr, ligand_value)
+            value = torch.cat((ligand_value, target_value), dim=cat_dim)
+            setattr(data, attr, value)
+
+        elif isinstance(ligand_value, list) and isinstance(target_value, list):
+            value = ligand_value + target_value
+            setattr(data, attr, value)
+
+        else:
+            # Log or silently skip incompatible types
+            continue
+        
+        ligand_value = getattr(ligand, attr)
+        target_value = getattr(target, attr)
+
 
     if label is not None:
         data.y = torch.tensor(label, dtype=torch.float).view(1, 1)
